@@ -3,7 +3,7 @@
 COSMAX 향취 후보 탐색 대시보드 — Wide Layout
 
 실행
-    streamlit run app_business_dashboard.py
+    streamlit run app_business_dashboard_themefix.py
 
 필요 파일 (app.py 와 같은 폴더)
     main_dataset.csv      분자표 — SMILES, 물성, 작용기, 기록된 향취
@@ -517,6 +517,176 @@ st.markdown("""
           display:none;
       }
   }
+</style>
+""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════
+# Theme-independent contrast fix
+# Streamlit/브라우저가 Light 모드여도 앱 화면은 Dark UI로 고정
+# ══════════════════════════════════════════════
+st.markdown("""
+<style>
+  html { color-scheme: dark !important; }
+
+  html, body,
+  [data-testid="stAppViewContainer"],
+  [data-testid="stMain"],
+  .stApp {
+      background-color: #08111f !important;
+      color: #f3f7fb !important;
+  }
+
+  .brand, .system-title, .section-title {
+      color: #f3f7fb !important;
+  }
+  .system-subtitle, .system-status,
+  .section-note, .tiny, .muted {
+      color: #9fb2c8 !important;
+  }
+  .score-number, .detail-score strong {
+      color: #50d17a !important;
+  }
+
+  [data-testid="stMarkdownContainer"],
+  [data-testid="stMarkdownContainer"] p,
+  [data-testid="stMarkdownContainer"] span,
+  [data-testid="stMarkdownContainer"] li {
+      color: #dbe7f3 !important;
+  }
+  [data-testid="stCaptionContainer"],
+  [data-testid="stCaptionContainer"] p {
+      color: #91a6bd !important;
+  }
+
+  [data-testid="stWidgetLabel"],
+  [data-testid="stWidgetLabel"] p,
+  [data-testid="stWidgetLabel"] span,
+  label, label p, label span {
+      color: #dbe7f3 !important;
+      opacity: 1 !important;
+  }
+
+  [data-testid="stMetric"],
+  [data-testid="stMetric"] * {
+      opacity: 1 !important;
+  }
+  [data-testid="stMetricLabel"],
+  [data-testid="stMetricLabel"] p,
+  [data-testid="stMetricLabel"] div {
+      color: #aebfd1 !important;
+  }
+  [data-testid="stMetricValue"],
+  [data-testid="stMetricValue"] div {
+      color: #ffffff !important;
+  }
+
+  div[data-baseweb="select"] > div {
+      background: #111d2e !important;
+      border-color: #38516f !important;
+      color: #f4f8fc !important;
+  }
+  div[data-baseweb="select"] span,
+  div[data-baseweb="select"] input,
+  div[data-baseweb="select"] svg {
+      color: #f4f8fc !important;
+      fill: #f4f8fc !important;
+      -webkit-text-fill-color: #f4f8fc !important;
+  }
+
+  [data-testid="stNumberInput"] input {
+      background: #111d2e !important;
+      color: #ffffff !important;
+      -webkit-text-fill-color: #ffffff !important;
+      border-color: #38516f !important;
+  }
+  [data-testid="stNumberInput"] button {
+      background: #111d2e !important;
+      color: #ffffff !important;
+      border-color: #38516f !important;
+  }
+  [data-testid="stNumberInput"] button svg {
+      fill: #ffffff !important;
+  }
+
+  [data-testid="stTextInput"] input,
+  [data-testid="stTextInput"] input:disabled {
+      background: #111d2e !important;
+      color: #d8e6f4 !important;
+      -webkit-text-fill-color: #d8e6f4 !important;
+      border-color: #38516f !important;
+      opacity: 1 !important;
+  }
+
+  [data-testid="stCheckbox"] label,
+  [data-testid="stCheckbox"] p,
+  [data-testid="stCheckbox"] span {
+      color: #dbe7f3 !important;
+      opacity: 1 !important;
+  }
+
+  button[data-baseweb="tab"],
+  button[data-baseweb="tab"] p,
+  button[data-baseweb="tab"] span {
+      color: #aebfd1 !important;
+      opacity: 1 !important;
+  }
+  button[data-baseweb="tab"][aria-selected="true"],
+  button[data-baseweb="tab"][aria-selected="true"] p,
+  button[data-baseweb="tab"][aria-selected="true"] span {
+      color: #ffffff !important;
+  }
+
+  div[data-testid="stVerticalBlockBorderWrapper"] {
+      background: linear-gradient(
+          180deg,
+          rgba(17,33,55,.98),
+          rgba(12,26,45,.98)
+      ) !important;
+      border-color: rgba(90,139,193,.34) !important;
+  }
+
+  .stButton > button,
+  .stDownloadButton > button {
+      background: #101d30 !important;
+      border-color: #38516f !important;
+      color: #f4f8fc !important;
+  }
+  .stButton > button p,
+  .stDownloadButton > button p {
+      color: #f4f8fc !important;
+  }
+  .stButton > button[kind="primary"] {
+      background: #e84f55 !important;
+      border-color: #e84f55 !important;
+  }
+
+  [data-testid="stExpander"] details,
+  [data-testid="stExpander"] summary,
+  [data-testid="stExpander"] summary p {
+      color: #dbe7f3 !important;
+      background: #101d30 !important;
+  }
+
+  div[data-baseweb="popover"],
+  div[data-baseweb="menu"],
+  ul[role="listbox"] {
+      background: #101d30 !important;
+      color: #ffffff !important;
+  }
+  li[role="option"],
+  li[role="option"] * {
+      color: #ffffff !important;
+      background: #101d30 !important;
+  }
+  li[role="option"]:hover {
+      background: #17304f !important;
+  }
+
+  header[data-testid="stHeader"] {
+      background: #08111f !important;
+  }
+
+  a { color: #72b6ff !important; }
 </style>
 """, unsafe_allow_html=True)
 
