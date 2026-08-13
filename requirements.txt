@@ -1,8 +1,230 @@
-streamlit
-pandas
-numpy
-scikit-learn
-joblib
-xgboost
-rdkit
-Pillow
+"""Rebuild leakage-safe match-model metrics used by the Streamlit AI page."""
+
+from __future__ import annotations
+
+from collections import defaultdict, deque
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.dummy import DummyClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, log_loss
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+MODEL_DIR = ROOT / "models"
+SEED = 42
+
+
+def new_team_state() -> dict:
+    return {
+        "elo": 1500.0,
+        "form_points": deque(maxlen=5),
+        "form_gd": deque(maxlen=5),
+        "season_gp": 0,
+        "season_points": 0,
+        "season_gf": 0,
+        "season_ga": 0,
+        "last_date": None,
+    }
+
+
+def mean_or(values: deque, default: float) -> float:
+    return float(np.mean(values)) if values else default
+
+
+def build_pre_match_features(matches: pd.DataFrame) -> pd.DataFrame:
+    ordered = matches.sort_values(["season_start_year", "match_date", "match_id"]).reset_index(drop=True)
+    states = defaultdict(new_team_state)
+    rows: list[dict] = []
+    active_season = None
+
+    for row in ordered.itertuples(index=False):
+        if row.season != active_season:
+            for state in states.values():
+                state["elo"] = 1500.0 + .75 * (state["elo"] - 1500.0)
+                state["form_points"].clear()
+                state["form_gd"].clear()
+                state["season_gp"] = 0
+                state["season_points"] = 0
+                state["season_gf"] = 0
+                state["season_ga"] = 0
+            active_season = row.season
+
+        home, away = states[row.home_team], states[row.away_team]
+        h_gp, a_gp = home["season_gp"], away["season_gp"]
+        home_rest = min((row.match_date - home["last_date"]).days, 30) if home["last_date"] is not None else 7
+        away_rest = min((row.match_date - away["last_date"]).days, 30) if away["last_date"] is not None else 7
+        home_form = mean_or(home["form_points"], 1.0)
+        away_form = mean_or(away["form_points"], 1.0)
+        home_ppg = home["season_points"] / h_gp if h_gp else 1.0
+        away_ppg = away["season_points"] / a_gp if a_gp else 1.0
+
+        rows.append(
+            {
+                "match_id": row.match_id,
+                "season": row.season,
+                "season_start_year": row.season_start_year,
+                "match_date": row.match_date,
+                "home_team": row.home_team,
+                "away_team": row.away_team,
+                "home_elo_pre": home["elo"],
+                "away_elo_pre": away["elo"],
+                "elo_diff_pre": home["elo"] - away["elo"],
+                "home_form_ppg5_pre": home_form,
+                "away_form_ppg5_pre": away_form,
+                "home_form_gd5_pre": mean_or(home["form_gd"], 0.0),
+                "away_form_gd5_pre": mean_or(away["form_gd"], 0.0),
+                "home_season_ppg_pre": home_ppg,
+                "away_season_ppg_pre": away_ppg,
+                "home_season_gf_pg_pre": home["season_gf"] / h_gp if h_gp else 1.2,
+                "away_season_gf_pg_pre": away["season_gf"] / a_gp if a_gp else 1.2,
+                "home_season_ga_pg_pre": home["season_ga"] / h_gp if h_gp else 1.2,
+                "away_season_ga_pg_pre": away["season_ga"] / a_gp if a_gp else 1.2,
+                "home_games_played_pre": h_gp,
+                "away_games_played_pre": a_gp,
+                "home_rest_days": home_rest,
+                "away_rest_days": away_rest,
+                "form_ppg_diff_pre": home_form - away_form,
+                "season_ppg_diff_pre": home_ppg - away_ppg,
+                "target_code": {"A": 0, "D": 1, "H": 2}[row.result_code],
+            }
+        )
+
+        if row.result_code == "H":
+            h_points, a_points, actual_home = 3, 0, 1.0
+        elif row.result_code == "A":
+            h_points, a_points, actual_home = 0, 3, 0.0
+        else:
+            h_points, a_points, actual_home = 1, 1, .5
+
+        expected_home = 1 / (1 + 10 ** ((away["elo"] - (home["elo"] + 65)) / 400))
+        margin = abs(int(row.home_goals) - int(row.away_goals))
+        delta = 20 * (1 + .1 * min(margin, 4)) * (actual_home - expected_home)
+        home["elo"] += delta
+        away["elo"] -= delta
+        goal_diff = int(row.home_goals) - int(row.away_goals)
+        home["form_points"].append(h_points)
+        away["form_points"].append(a_points)
+        home["form_gd"].append(goal_diff)
+        away["form_gd"].append(-goal_diff)
+        for state, points, gf, ga in (
+            (home, h_points, row.home_goals, row.away_goals),
+            (away, a_points, row.away_goals, row.home_goals),
+        ):
+            state["season_gp"] += 1
+            state["season_points"] += points
+            state["season_gf"] += int(gf)
+            state["season_ga"] += int(ga)
+            state["last_date"] = row.match_date
+
+    return pd.DataFrame(rows)
+
+
+def evaluate(model_name: str, y_true: np.ndarray, pred: np.ndarray, proba: np.ndarray) -> dict:
+    return {
+        "model": model_name,
+        "accuracy": accuracy_score(y_true, pred),
+        "balanced_accuracy": balanced_accuracy_score(y_true, pred),
+        "macro_f1": f1_score(y_true, pred, average="macro"),
+        "log_loss": log_loss(y_true, proba, labels=[0, 1, 2]),
+    }
+
+
+def friendly_feature_name(name: str) -> str:
+    if name.startswith("teams__home_team_"):
+        return "홈팀 정체성 (전체)"
+    if name.startswith("teams__away_team_"):
+        return "원정팀 정체성 (전체)"
+    mapping = {
+        "season_start_year": "시즌 연도",
+        "home_elo_pre": "홈 Elo",
+        "away_elo_pre": "원정 Elo",
+        "elo_diff_pre": "Elo 차이",
+        "home_form_ppg5_pre": "홈 최근5경기 PPG",
+        "away_form_ppg5_pre": "원정 최근5경기 PPG",
+        "home_form_gd5_pre": "홈 최근5경기 득실",
+        "away_form_gd5_pre": "원정 최근5경기 득실",
+        "home_season_ppg_pre": "홈 시즌 PPG",
+        "away_season_ppg_pre": "원정 시즌 PPG",
+        "home_season_gf_pg_pre": "홈 시즌 득점/경기",
+        "away_season_gf_pg_pre": "원정 시즌 득점/경기",
+        "home_season_ga_pg_pre": "홈 시즌 실점/경기",
+        "away_season_ga_pg_pre": "원정 시즌 실점/경기",
+        "home_games_played_pre": "홈 시즌 경기수",
+        "away_games_played_pre": "원정 시즌 경기수",
+        "home_rest_days": "홈 휴식일",
+        "away_rest_days": "원정 휴식일",
+        "form_ppg_diff_pre": "최근 폼 PPG 차이",
+        "season_ppg_diff_pre": "시즌 PPG 차이",
+    }
+    raw = name.replace("numeric__", "")
+    return mapping.get(raw, raw)
+
+
+def main() -> None:
+    matches = pd.read_csv(DATA_DIR / "01_matches_clean.csv", parse_dates=["match_date"], low_memory=False)
+    model_df = build_pre_match_features(matches)
+    train = model_df[model_df["season_start_year"] <= 2022].copy()
+    validation = model_df[model_df["season_start_year"] == 2023].copy()
+    test = model_df[model_df["season_start_year"] >= 2024].copy()
+
+    categorical = ["home_team", "away_team"]
+    excluded = {"match_id", "season", "match_date", "target_code"}
+    numeric = [c for c in model_df.columns if c not in excluded | set(categorical)]
+    columns = categorical + numeric
+    preprocessor = ColumnTransformer(
+        [
+            ("teams", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical),
+            ("numeric", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]), numeric),
+        ],
+        sparse_threshold=0,
+    )
+    x_train = np.asarray(preprocessor.fit_transform(train[columns]), dtype=np.float32)
+    x_val = np.asarray(preprocessor.transform(validation[columns]), dtype=np.float32)
+    x_test = np.asarray(preprocessor.transform(test[columns]), dtype=np.float32)
+    y_train = train["target_code"].to_numpy()
+    y_val = validation["target_code"].to_numpy()
+    y_test = test["target_code"].to_numpy()
+
+    models = {
+        "Dummy": DummyClassifier(strategy="prior", random_state=SEED),
+        "Logistic": LogisticRegression(max_iter=2500, class_weight="balanced", random_state=SEED),
+        "RandomForest": RandomForestClassifier(n_estimators=400, min_samples_leaf=4, class_weight="balanced_subsample", n_jobs=-1, random_state=SEED),
+        "HistGradientBoosting": HistGradientBoostingClassifier(max_iter=300, learning_rate=.05, max_leaf_nodes=31, l2_regularization=1.0, random_state=SEED),
+    }
+    validation_scores = []
+    for name, estimator in models.items():
+        estimator.fit(x_train, y_train)
+        validation_scores.append(evaluate(name, y_val, estimator.predict(x_val), estimator.predict_proba(x_val)))
+    best_name = pd.DataFrame(validation_scores).sort_values("macro_f1", ascending=False).iloc[0]["model"]
+
+    test_scores = []
+    for name, estimator in models.items():
+        test_scores.append(evaluate(name, y_test, estimator.predict(x_test), estimator.predict_proba(x_test)))
+    pd.DataFrame(test_scores).sort_values("macro_f1", ascending=False).to_csv(DATA_DIR / "model_metrics.csv", index=False)
+
+    forest = models["RandomForest"]
+    feature_names = preprocessor.get_feature_names_out()
+    importance = pd.DataFrame({"feature": feature_names, "importance": forest.feature_importances_})
+    importance["feature_label"] = importance["feature"].map(friendly_feature_name)
+    importance = importance.groupby("feature_label", as_index=False)["importance"].sum().sort_values("importance", ascending=False)
+    importance.to_csv(DATA_DIR / "model_feature_importance.csv", index=False, encoding="utf-8-sig")
+
+    MODEL_DIR.mkdir(exist_ok=True)
+    joblib.dump(preprocessor, MODEL_DIR / "match_preprocessor.joblib")
+    joblib.dump(models[best_name], MODEL_DIR / "best_baseline.joblib")
+    print(f"Saved metrics, importance and best baseline: {best_name}")
+
+
+if __name__ == "__main__":
+    main()
+

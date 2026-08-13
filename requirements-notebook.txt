@@ -1,0 +1,32 @@
+"""Fast repository checks that do not start a Streamlit server."""
+
+from pathlib import Path
+import py_compile
+
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> None:
+    py_compile.compile(str(ROOT / "app.py"), doraise=True)
+    checks = {
+        "01_matches_clean.csv": (7650, {"season", "match_date", "home_team", "away_team", "result_code"}),
+        "02_team_match_long.csv": (15300, {"season", "match_date", "team", "opponent", "points"}),
+        "03_team_season_summary.csv": (450, {"season", "calculated_rank", "team", "points"}),
+        "04_players_2025_26_clean.csv": (507, {"player", "club", "minutes", "position_group"}),
+        "05_player_bis_2025_26.csv": (284, {"player", "club", "bis_score", "bis_position_rank"}),
+    }
+    for filename, (minimum_rows, required_columns) in checks.items():
+        frame = pd.read_csv(ROOT / "data" / filename, low_memory=False)
+        missing = required_columns - set(frame.columns)
+        assert len(frame) >= minimum_rows, f"{filename}: expected at least {minimum_rows} rows"
+        assert not missing, f"{filename}: missing columns {sorted(missing)}"
+    assert (ROOT / "assets" / "bundesliga_logo.svg").stat().st_size > 1000
+    print("Smoke test passed: code, data and logo are ready.")
+
+
+if __name__ == "__main__":
+    main()
+
